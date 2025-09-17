@@ -60,7 +60,7 @@ Anda bisa mengedit `main.py` untuk mengubah:
 
 ## Lisensi
 Project ini open source dengan lisensi MIT.
-Check dokumen [LICENSE](link)
+Check dokumen [LICENSE](https://raw.githubusercontent.com/x866bash/downloader/refs/heads/main/LICENSE)
 
 ---
 **Dokumen ini saya buat dengan terburu buru karena ingin menonton anime naruto yang berada di archive.org**
