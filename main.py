@@ -8,13 +8,14 @@ from tkinter import ttk, scrolledtext, messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ---------- Konfigurasi ----------
-BASE_URL = "https://archive.org/download/NS-251-275"
+BASE_URL = "https://archive.org/download/NS-326-350"
 OUTPUT_DIR = "downloads"
 MAX_PARALLEL_DOWNLOADS = 5
 SOCKET_TIMEOUT = 20
 MAX_RETRIES = 5
 EXTERNAL_DOWNLOADER = "aria2c"
 EXTERNAL_DOWNLOADER_ARGS = "-x 16 -k 1M"  # 16 koneksi, 1MB per chunk
+
 
 # ---------- Helper Functions ----------
 def get_mp4_links(url):
@@ -30,18 +31,38 @@ def get_mp4_links(url):
             links.append(f"{url}/{a['href']}")
     return links, None
 
+
 # ---------- GUI Class ----------
 class DownloaderGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Archive.org MP4 Downloader")
-        self.geometry("950x650")
+        self.geometry("950x750")
         self.protocol("WM_DELETE_WINDOW", self.on_quit)
         self.create_widgets()
         self.executor = ThreadPoolExecutor(max_workers=MAX_PARALLEL_DOWNLOADS)
         self.lock = threading.Lock()
+        self.base_url = BASE_URL
 
     def create_widgets(self):
+        # Frame input URL
+        self.frame_input = ttk.LabelFrame(self, text="Input Link Archive.org")
+        self.frame_input.pack(fill=tk.X, padx=5, pady=5)
+
+        self.entry_url = ttk.Entry(self.frame_input, width=80)
+        self.entry_url.insert(0, BASE_URL)
+        self.entry_url.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.btn_set_url = ttk.Button(self.frame_input, text="Set Link", command=self.set_url)
+        self.btn_set_url.pack(side=tk.LEFT, padx=5)
+
+        self.btn_check = ttk.Button(self.frame_input, text="Check Files", command=self.check_files)
+        self.btn_check.pack(side=tk.LEFT, padx=5)
+
+        self.btn_download_missing = ttk.Button(self.frame_input, text="Download Missing Only",
+                                               command=self.download_missing_from_check)
+        self.btn_download_missing.pack(side=tk.LEFT, padx=5)
+
         # Frame untuk progress
         self.frame_progress = ttk.LabelFrame(self, text="Download Progress (Maks 5 File)")
         self.frame_progress.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
@@ -65,20 +86,76 @@ class DownloaderGUI(tk.Tk):
         self.frame_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.text_log = scrolledtext.ScrolledText(self.frame_log, wrap=tk.WORD, height=15)
         self.text_log.pack(fill=tk.BOTH, expand=True)
-        self.text_log.bind("<Key>", lambda e: "break")  # mencegah edit
-        self.text_log.bind("<Button-1>", lambda e: None)  # tetap bisa select copy
+        self.text_log.bind("<Key>", lambda e: "break")
+        self.text_log.bind("<Button-1>", lambda e: None)
 
         # Frame file selesai
         self.frame_done = ttk.LabelFrame(self.frame_bottom, text="Downloaded Files")
         self.frame_done.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.text_done = scrolledtext.ScrolledText(self.frame_done, wrap=tk.WORD, height=15)
         self.text_done.pack(fill=tk.BOTH, expand=True)
-        self.text_done.bind("<Key>", lambda e: "break")  # mencegah edit
-        self.text_done.bind("<Button-1>", lambda e: None)  # tetap bisa select copy
+        self.text_done.bind("<Key>", lambda e: "break")
+        self.text_done.bind("<Button-1>", lambda e: None)
 
         # Tombol start
         self.btn_start = ttk.Button(self, text="Start Download", command=self.start_download)
         self.btn_start.pack(pady=5)
+
+    def set_url(self):
+        self.base_url = self.entry_url.get().strip()
+        self.log(f"[INFO] URL diatur ke: {self.base_url}")
+
+    def check_files(self):
+        self.log("Mengecek file MP4 yang sudah terdownload...")
+        links, err = get_mp4_links(self.base_url)
+        if err:
+            self.log(err)
+            return
+        if not links:
+            self.log("[ERROR] Tidak ditemukan file MP4 di link.")
+            return
+
+        total = len(links)
+        downloaded = 0
+        self.missing_links = []
+
+        for link in links:
+            filename = os.path.join(OUTPUT_DIR, os.path.basename(link))
+            if os.path.exists(filename):
+                downloaded += 1
+            else:
+                self.missing_links.append(link)
+                self.log(f"[MISSING] {os.path.basename(link)}")
+
+        self.log(f"[CHECK] {downloaded}/{total} file sudah terdownload.")
+
+        if not self.missing_links:
+            messagebox.showinfo("Check Files", "Semua file sudah terdownload ✔")
+        else:
+            messagebox.showwarning("Check Files",
+                                   f"{downloaded} dari {total} file sudah ada.\n"
+                                   f"{len(self.missing_links)} file masih hilang.")
+
+    def download_missing_from_check(self):
+        if not hasattr(self, "missing_links") or not self.missing_links:
+            messagebox.showinfo("Download Missing", "Tidak ada file yang hilang untuk diunduh.")
+            return
+        threading.Thread(target=self.download_missing, args=(self.missing_links,)).start()
+
+    def download_missing(self, missing_links):
+        self.log(f"[INFO] Mendownload ulang {len(missing_links)} file yang belum terdownload...")
+        futures = []
+        for i, url in enumerate(missing_links):
+            idx = i % MAX_PARALLEL_DOWNLOADS
+            futures.append(self.executor.submit(self.download_file, url, idx))
+
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                self.log(f"[EXCEPTION] {e}")
+
+        self.log("[INFO] Download ulang selesai.")
 
     def log(self, message):
         with self.lock:
@@ -127,7 +204,7 @@ class DownloaderGUI(tk.Tk):
                     elif "[download]" in line and "%" in line:
                         try:
                             parts = line.split()
-                            percent = float(parts[1].replace("%",""))
+                            percent = float(parts[1].replace("%", ""))
                             self.progress_bars[index]['value'] = percent
                         except:
                             pass
@@ -149,7 +226,7 @@ class DownloaderGUI(tk.Tk):
 
     def download_all(self):
         self.log("Mencari file MP4 di archive.org...")
-        links, err = get_mp4_links(BASE_URL)
+        links, err = get_mp4_links(self.base_url)
         if err:
             self.log(err)
             self.btn_start.config(state=tk.NORMAL)
@@ -178,6 +255,7 @@ class DownloaderGUI(tk.Tk):
         if messagebox.askokcancel("Quit", "Apakah Anda yakin ingin keluar?"):
             self.executor.shutdown(wait=False)
             self.destroy()
+
 
 # ---------- Main ----------
 if __name__ == "__main__":
